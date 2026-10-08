@@ -12,6 +12,7 @@ You are migrating a **client application** from ThinkAR API V1 to API V2. Follow
 | `references/v1-to-v2-migration-analysis.md` | Field-by-field request/response diffs, breaking changes, the "Needs manual review" list |
 | `references/v2-technical-inventory.md` | V2 behavior only: auth, every endpoint, models, errors, WebSocket protocols |
 | `references/v1-api-endpoints.md` | V1 behavior only: what the old code was calling |
+| `references/ota-tool-v2.md` | The internal OTA firmware tool (Android and iOS): shared engineer account, update then release the glasses. Read it only when the codebase is the OTA tool |
 
 If two documents ever disagree, the **migration guide** wins. Then report the conflict to the user.
 
@@ -32,6 +33,7 @@ If two documents ever disagree, the **migration guide** wins. Then report the co
 11. **Keep the current behavior unless the V2 contract forces a change.** Don't refactor unrelated code.
 12. **Never put secrets in code or logs.** That includes session tokens, one-time tickets and push tokens.
 13. **Ask before destructive or ambiguous changes**, for example deleting a feature that has no V2 equivalent.
+14. **The OTA tool is a separate case.** If the codebase matches "How to recognise it" in `references/ota-tool-v2.md`, follow that file where it differs from this one.
 
 ---
 
