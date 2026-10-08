@@ -43,10 +43,10 @@ mkdir -p <project>/.cursor/rules && cp <project>/v2-migration-skill/.cursor/rule
 Paste or attach `AGENTS.md` (plain Markdown, no tool-specific syntax) and the `references/` folder.
 
 ## Updating
-1. Edit the docs in `migrate-doc/`, and `SKILL.md` here if the rules change.
+1. Edit the docs in `migrate-doc/md files/`, and `SKILL.md` here if the rules change.
 2. Run:
    ```bash
-   python3 scripts/sync.py ..        # copies the 4 docs into references/ and regenerates AGENTS.md + the Cursor rule
+   python3 scripts/sync.py "../md files"   # copies the 4 docs into references/ and regenerates AGENTS.md + the Cursor rule
    ```
 3. Never edit `AGENTS.md` or the `.mdc` file by hand. They are generated.
 
@@ -54,5 +54,5 @@ Paste or attach `AGENTS.md` (plain Markdown, no tool-specific syntax) and the `r
 1. Find every V1 touchpoint (search patterns are included).
 2. Map each one using the verified endpoint matrix. Unmapped items are never invented.
 3. Migrate in a fixed order: configuration → auth → error parser → user → devices → firmware → app update → live agent → live translation.
-4. Leave `TODO(v2-migration)` for the 10 open items, instead of guessing.
+4. Leave `TODO(v2-migration)` for the open items (SKILL.md §7.1), instead of guessing, and apply the answers for the resolved items (§7.2).
 5. Build, lint and test, then finish with a standard migration report.

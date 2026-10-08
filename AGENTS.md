@@ -20,7 +20,7 @@ If two documents ever disagree, the **migration guide** wins. Then report the co
 ## 1. Hard rules
 
 1. **Never invent a mapping.** If a V1 call, field, event or state isn't in the references, don't map it. Mark it `TODO(v2-migration): needs manual review — <reason>` and list it in your final report.
-2. **Don't implement the open items** (§7). Leave a `TODO(v2-migration)` and report it.
+2. **Don't implement the open items** (§7.1). Leave a `TODO(v2-migration)` and report it. The items in §7.2 are resolved: apply those answers.
 3. **Migrate auth first.** Every other V2 call depends on the session token.
 4. **One credential model per client.** Don't let V1 tokens and V2 tokens coexist in the same request path. Delete V1 token storage once V2 auth works.
 5. **Don't add a refresh flow.** V2 has no refresh token and no refresh endpoint. Remove all V1 refresh code and expiry timers.
@@ -49,6 +49,11 @@ update-log         terminals         me/terminals       Idempotency-Key    cloud
 cloud_token_ble    claim             mac_ble            device_token       firmware_ver
 /live-agent        analyze_image     video_stream       stop_agent         macId
 translate_v2       auth_token        source_text        thinkar-dev-ai-agent
+release_directive  reserved_by_other RESERVED_BY_OTHER  UNSUPPORTED_MODEL  device_type
+request_configuration_sn  claim_after_reset_allowed  imagelnfo  take_photo  take_AI_photo
+bg_image           birthday          height             weight             gender
+4.216.186.250      10.1.12.32        /api/v4            /api/v2/firmware   userSetup
+captcha            chat/completions  google/translate   upload/logs        0xE0000000
 ```
 Also find: the base-URL constants, the auth header builder, token storage, the error parser, and every model with integer `id` fields for users, devices or firmware.
 
@@ -66,7 +71,8 @@ Also find: the base-URL constants, the auth header builder, token storage, the e
 7. App update check.
 8. Live agent (Socket.IO).
 9. Live translation (WebSocket).
-10. Optional V2 features (push token, device removals): only if the user asks.
+10. Legacy MBNetwork clients (§4.5).
+11. Optional V2 features (push token, device removals): only if the user asks.
 
 ### Step 4: Verify
 - Update or add tests for every changed call.
@@ -131,8 +137,26 @@ Rules for all sign-in calls:
 |---|---|
 | Reset: `reset-password` → `verify-otp(recovery)` → `update-password` + Bearer | `POST /v2/auth/email-otp/request-password-reset` `{ email }`, then `POST /v2/auth/email-otp/reset-password` `{ email, otp, password }` (no Bearer). Or the link flow: `/v2/auth/request-password-reset` + `/v2/auth/reset-password` `{ newPassword, token }` |
 | Signed-in password change `{ password }` | `POST /v2/auth/change-password` `{ currentPassword, newPassword, revokeOtherSessions? }` |
-| Change email: request + verify code | `POST /v2/auth/change-email` `{ newEmail }` → `{ status: true }`. For a verified account, a confirmation link goes to the **current** email. **Remove the code-entry screen.** It returns success even if the email is already taken |
+| Signed-in "verify an email code, then set a new password" | **No V2 equivalent.** Use the reset flow above. It works signed in, and it signs out **every** session, so go to sign-in afterwards |
+| Change email: request + verify code | `POST /v2/auth/change-email` `{ newEmail, callbackURL }` → `{ status: true }`. **Remove the code-entry screen.** It returns success even if the email is already taken. See below |
 | `POST /auth/delete-account` | `DELETE /v2/account` `{ password }`. Social-only accounts must have signed in less than 5 minutes ago. Errors: `403 AUTH_REAUTH_REQUIRED`, `409 ACCOUNT_SOLE_OWNER` |
+
+- **Reset for a passwordless account** (Google / Apple only) returns success but sends no email. When signed in, hide "change password" if `user.canChangePassword` is `false`.
+- **Change email, verified account: two links.**
+  1. Link #1 goes to the **current** address.
+  2. Clicking it sends link #2 to the **new** address.
+  3. Clicking #2 changes the email.
+  - An unverified account changes at once.
+  - The links open in the browser. Pass `callbackURL` with the app's deep-link scheme (`ailens://`, `ailensqa://`, `ailensstaging://`) so each click returns to the app. A failure redirects with `?error=TOKEN_EXPIRED` or `INVALID_TOKEN`.
+  - The app session is **kept**. There's no push: read the new email from `get-session` on foreground or on the deep link. Tell the user to check both inboxes.
+- **Email-code types:** `email-verification`, `sign-in`, `forget-password`. Delete the V1 types `invite` and `email_change`. Sending `type: "change-email"` returns `400`.
+
+### 3.7 Profile
+| V1 field | V2 |
+|---|---|
+| `name` | `name`, changed with `POST /v2/auth/update-user { name }` |
+| `img` | `image` (in `get-session`), changed with `POST /v2/auth/update-user { image }`. URL only: there is **no** upload endpoint |
+| `phone`, `birthday`, `gender`, `height`, `weight`, `bg_image`, `language` | **Not in V2.** Remove them from models and UI, and remove the V1 profile update call (ask first, rule 13) |
 
 ---
 
@@ -155,13 +179,13 @@ Rules for all sign-in calls:
 | `POST /api/v1/auth/change-email/request` | `POST /v2/auth/change-email` | Link-based |
 | `POST /api/v1/auth/change-email/verify` | — | Remove |
 | `POST /api/v1/auth/delete-account` | `DELETE /v2/account` | |
-| `GET /api/v1/user` (array) | `GET /v2/me` `{id, email, name}` / `GET /v2/auth/get-session` | Object, UUID `id`; `glassUserId` in get-session |
+| `GET /api/v1/user` (array) | `GET /v2/me` `{id, email, name}` / `GET /v2/auth/get-session` | Object, UUID `id`; `glassUserId` and `image` in get-session (§3.7) |
 | `GET /api/v1/app-version/check?platform&version` | `GET /v2/app-releases/check?platform&build&osVersion` | Response `{ status: up-to-date \| optional \| forced, release, storeUrl }`; never 404 |
-| `GET /api/v1/firmware/latest/{deviceType}` | `GET /v2/devices/{id}/firmware/check?currentVersion=` | By device UUID |
+| `GET /api/v1/firmware/latest/{deviceType}` | `GET /v2/devices/{id}/firmware/check?currentVersion=` | By owned device UUID; the server picks the firmware (§4.4) |
 | `GET /api/v1/firmware/download/{id}` | — | Use `release.url` (valid 15 min) |
 | `POST` + `PATCH /api/v1/firmware/update-log` | `POST /v2/devices/{id}/firmware/updates` | **One** report at the end: `{ releaseId, status, error?, sdkVersion, startedAt, endedAt }` |
-| `POST /api/v1/terminals/verify` | `POST /v2/devices/lookup` `{ macAddress }` | No `cloud_token` |
-| `POST /api/v1/terminals/bind` | `POST /v2/devices/bind` | camelCase; **no** `Idempotency-Key`, `cloud_token` or `claim` |
+| `POST /api/v1/terminals/verify` | `POST /v2/devices/lookup` `{ macAddress }` | No `cloud_token`: the app generates it (§4.3) |
+| `POST /api/v1/terminals/bind` | `POST /v2/devices/bind` | camelCase; **no** `Idempotency-Key`, `cloud_token`, `claim`, `device_type` or `request_configuration_sn`. Send `modelCode` |
 | `POST /api/v1/terminals/{id}/unbind` | `POST /v2/devices/{id}/unbind` `{ cause? }` | → `{ released }` |
 | `POST /api/v1/terminals/{id}/name` | `POST /v2/devices/{id}/rename` | |
 | `GET /api/v1/me/terminals` | `GET /v2/devices?limit&cursor` | `{ devices, nextCursor }` |
@@ -195,6 +219,51 @@ Rules for all sign-in calls:
 | `download_url` | `release.url` |
 | `forceUpdate` / `hasUpdate` | `status` |
 | `accessToken` / `access_token` | `token` |
+| `img` | `image` |
+| `device_type` (bind) | `modelCode` |
+
+### 4.3 Glasses pairing and binding
+Full details: `references/api-v1-to-v2-migration-guide.md` §6.8.
+
+**First-time bind:**
+1. `POST /v2/devices/lookup { macAddress }`. Continue **only** on `claimable` or `owned_by_me`.
+2. Generate the cloud token in the app, fresh on every pairing connect: `(unixSeconds & 0xFFFFFF) | 0xE0000000` (`0xE1000000` for rings). The server no longer issues one.
+3. Connect over BLE with that cloud token and `userId` = `user.glassUserId` (integer, from `get-session`). **Never** use the UUID. Use the same number on every connect.
+4. The handshake returns `deviceToken` (decimal string).
+5. `POST /v2/devices/bind { macAddress, deviceToken, modelCode, serialNumber, firmwareVersion, … }`. Store the returned `deviceToken` in secure storage, keyed by MAC.
+
+**Other cases:**
+
+| Case | What to do |
+|---|---|
+| Reconnect (reinstall, new phone) | Use the stored `deviceToken` from `GET /v2/devices`. Never fall back to a fresh pairing |
+| Glasses reject the stored token (iOS `ERROR_SE_VALUE`, code 8) | Clear the stored token; send the user to add the device |
+| Glasses reject a fresh pairing (old binding on the glasses; V1 `release_directive`) | Once per session: connect with the bare key `0xE0000000` → BLE unbind command → wait 500 ms → pair again. Only after `lookup` said `claimable` / `owned_by_me` |
+| V1 `reserved_by_other` / `RESERVED_BY_OTHER` | Gone; V2 has no reservation. Remove the "try again in N seconds" UI |
+| Factory-reset takeover (V1 `claim: true`) | No customer path. Remove the claim UI (ask first, rule 13). Show "These glasses are still linked to another account. Ask the previous owner to remove them in the app, or contact support." |
+| The owner wipes their own glasses | `POST /v2/devices/{id}/unbind { "cause": "factory_reset" }` |
+| Model not supported (V1 `UNSUPPORTED_MODEL`) | Gone. A bind never fails because of the model |
+
+### 4.4 Firmware model
+- V2 picks the firmware from the device's **server-side model**. The client can't change it.
+- A bind sets the model only if the device has none yet. Staff manage models after that.
+- Remove client-side model overrides. For example, V1 iOS requested Bach firmware for G09NBA glasses, which report the G09 code `000A`. Before removing an override, flag it in the report: someone who manages device models must confirm which model the code points to in production (§7.1).
+- `status: "unknown-model"` means the device has no model.
+- Firmware check and report only work **after bind**: any device the user doesn't own returns `404 DEVICE_NOT_FOUND`. There is no check by MAC address.
+
+### 4.5 Legacy MBNetwork services
+Clients for the older backend at `4.216.186.250` (ports `8066`, `8069`, `8074`) and `10.1.12.32` are **retired**. Move each call to V2:
+
+| Legacy | V2 |
+|---|---|
+| `/api/v1/users/*`, `/api/v1/captcha/*`, `/api/v1/userSetup/*` | `/v2/auth/*`, `/v2/me`. No captcha |
+| `/api/v4/terminals/*` | `/v2/devices/*` |
+| `/api/v2/firmware/*` | `/v2/devices/{id}/firmware/check`, `/firmware/updates` |
+| `/api/v1/chat/completions` | Live agent `message` event (§6.1) |
+| `/api/v1/google/translate` | Live translation (§6.2) |
+| `/api/v1/upload/logs` | `POST /v2/reports` (attachments up to 25 MB) |
+
+Whether those servers still answer is an operations question. Don't decide it in code.
 
 ---
 
@@ -210,10 +279,11 @@ Rules for all sign-in calls:
   | `DEVICE_UNAVAILABLE` | `409 DEVICE_BLOCKED`, or `404 DEVICE_NOT_PROVISIONED` (retired) |
   | `DEVICE_NOT_PROVISIONED` | unchanged (404) |
   | `DEVICE_TOKEN_INVALID` | unchanged (422) |
-  | — | `409 DEVICE_CONTENDED`: retry |
+  | — | `409 DEVICE_CONTENDED`: retry the same bind **right away**; there is no retry delay |
   | `FORBIDDEN` (not your device) | `403 DEVICE_NOT_OWNED` |
 
-- **Removed codes:** `CLOUD_TOKEN_EXPIRED` (410), `INVALID_CLOUD_TOKEN`, `MISSING_IDEMPOTENCY_KEY`, `IDEMPOTENCY_MISMATCH`, `CLAIM_RATE_LIMITED`, `INVALID_CLAIM_TOKEN`. Delete the handlers for them.
+- **Removed codes:** `CLOUD_TOKEN_EXPIRED` (410), `INVALID_CLOUD_TOKEN`, `MISSING_IDEMPOTENCY_KEY`, `IDEMPOTENCY_MISMATCH`, `CLAIM_RATE_LIMITED`, `INVALID_CLAIM_TOKEN`, `RESERVED_BY_OTHER`, `UNSUPPORTED_MODEL`. Delete the handlers for them.
+- **`DEVICE_CONTENDED` is not `RESERVED_BY_OTHER`.** It means the bind raced with a simultaneous unbind. Don't carry over V1's `retry_after_seconds` wait.
 - **Unknown device id:** unbind returns `200 { released: false }` (V1: 404); rename returns `403 DEVICE_NOT_OWNED` (V1: 404).
 - **Rate limits:** `429 RATE_LIMITED`. Honor the `retry-after` header.
 - Full tables: `references/api-v1-to-v2-migration-guide.md` §8.
@@ -233,7 +303,17 @@ Rules for all sign-in calls:
   - Keep `audio_stream` (base64 PCM16 16 kHz) and `message` (string or `{ text, city?, country? }`).
   - Hang up with `close_session`.
   - **Remove** `analyze_image`, `video_stream`, `stop_agent`, `client_ready_to_speak` and `user_interrupt`.
-- **Photos:** on `device_tool_call` with `thinkar_device_tool_page_take_AI_photo` / `thinkar_device_tool_page_take_photo`, capture the photo and emit `photo_tool_response` `{ status: "ok", data: { image: <base64 JPEG> } }`. QR scans use `qr_scan_tool_response`. **Ack every `device_tool_call` within 30 s.**
+- **Tool calls:** ack every `device_tool_call` **right away**. The ack is passed to the model as the tool result. The server's tool timeout is **10 s** by default; 30 s is only the socket's backstop.
+- **Photos.** The two photo tools need **different** replies:
+
+  | Tool | Ack | Then |
+  |---|---|---|
+  | `thinkar_device_tool_page_take_AI_photo` | `{ acknowledged: true }`, at once. Don't wait for the image | Emit `photo_tool_response` `{ status: "ok", data: { image: <base64 JPEG, no data: prefix> } }`. On a failed capture, emit `{ status: "error", data: { message } }` |
+  | `thinkar_device_tool_page_take_photo` (save on the device, no AI) | `{ status: "ok", data: { message } }` | **Nothing.** Never emit `photo_tool_response`: the server sends every such image to the model |
+
+  - **Size:** the whole message must be under **1 MB**. Keep the JPEG under about 700 KB. An oversized message drops the socket and ends the call.
+  - `imageInfo` is optional and ignored.
+  - QR scans use `qr_scan_tool_response` with the same shape.
 - **Server → client:**
   - Unchanged: `gemini_session_opened` (save `resume_key`), `gemini_audio`, `gemini_output_transcript`, `gemini_input_transcript`, `gemini_turn_complete`, `gemini_interrupted`.
   - `error` replaces `gemini_error`.
@@ -256,19 +336,31 @@ Rules for all sign-in calls:
 
 ---
 
-## 7. Open items: do NOT implement, leave a TODO and report
+## 7. Open and resolved items
+
+### 7.1 Open items: do NOT implement, leave a TODO and report
 These have no confirmed V2 equivalent. If the code depends on one, add `TODO(v2-migration): needs manual review — <item>`, keep the app compiling, and report it:
 
-1. V1 profile fields: `phone`, `birthday`, `height`, `weight`, `gender`, `img`, `bg_image`, `language`.
-2. The `subscription` object in the V1 sign-in response.
-3. Email-code types `invite` and `email_change`.
-4. Glasses handshake values `cloud_token` / `cloud_token_ble` from `terminals/verify`.
-5. Lookup states `release_directive`, `reserved_by_other`, and the code `RESERVED_BY_OTHER`.
-6. The factory-reset takeover (`claim: true`). V2 refuses to bind a device owned by another account.
-7. Bind fields `device_type`, `request_configuration_sn`, and the error `UNSUPPORTED_MODEL`.
-8. The exact acknowledgement payload for the photo tool call.
-9. LINE sign-in (it uses a redirect flow, not the ID-token call).
-10. The step after the change-email confirmation link is clicked.
+1. The `subscription` object in the V1 sign-in response.
+2. LINE sign-in (it uses a redirect flow, not the ID-token call).
+3. Client-side firmware model overrides (e.g. G09NBA → Bach): remove them, but report that someone must confirm the production model mapping for the code (§4.4).
+
+### 7.2 Resolved items: apply these answers
+These were open items before. The API team answered them on 2026-10-07, and the answers were checked against the V2 source (`dev`, commit `685fd7a9b`). Removing a screen or feature is still a destructive change, so confirm with the user first (rule 13).
+
+| Item | Answer | Where |
+|---|---|---|
+| V1 profile fields | `img` → `image`. The rest are not in V2: drop them | §3.7 |
+| Email-code types `invite`, `email_change` | No V2 use. Delete them | §3.6 |
+| `cloud_token` / `cloud_token_ble` | Generated by the app | §4.3 |
+| `release_directive`, `reserved_by_other`, `RESERVED_BY_OTHER` | No server state. Clear stale bindings over BLE; no reservation | §4.3, §5 |
+| Factory-reset takeover (`claim: true`) | No customer path. Remove the claim UI | §4.3 |
+| `device_type`, `request_configuration_sn`, `UNSUPPORTED_MODEL` | Drop them. Send `modelCode` | §4.3 |
+| Photo tool acknowledgement | `{ acknowledged: true }` right away; `photo_tool_response` only for the AI photo tool | §6.1 |
+| After the change-email link is clicked | A second link goes to the new address; the session is kept | §3.6 |
+| Change password by email code while signed in | Not available. Use the reset flow | §3.6 |
+| Firmware before bind | Not possible. OTA only after bind | §4.4 |
+| Legacy MBNetwork hosts | Retired | §4.5 |
 
 ---
 
@@ -285,7 +377,7 @@ End the migration with:
 - <file>:<line> — <what was removed and why (e.g. refresh flow — no V2 equivalent)>
 
 ### Needs manual review
-- <file>:<line> — <open item # from §7 / unmapped call> — <what the code depended on>
+- <file>:<line> — <open item # from §7.1 / unmapped call> — <what the code depended on>
 
 ### Verification
 - Build: <pass/fail> · Lint: <pass/fail> · Tests: <pass/fail, counts>
@@ -304,3 +396,11 @@ End the migration with:
 - Sending binary Float32 audio to `/v2/translation/live`.
 - Moving a native app to cookies.
 - Adding a token-refresh timer.
+- Acking a photo tool call only after the image is ready (the server's 10 s tool timeout fires first).
+- Sending `photo_tool_response` for `take_photo` (the photo goes to the model).
+- Sending a photo message over 1 MB (the socket drops and the call ends).
+- Pairing glasses with the UUID `user.id` instead of `glassUserId`.
+- Treating `409 DEVICE_CONTENDED` as V1 `reserved_by_other` and waiting before retrying.
+- Calling the firmware check before the device is bound.
+- Keeping a client-side firmware model override.
+- Leaving the change-email `callbackURL` out (the links end on a web page, not in the app).
