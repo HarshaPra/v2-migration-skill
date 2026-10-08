@@ -8,7 +8,7 @@ import pathlib, shutil, sys
 
 root = pathlib.Path(__file__).resolve().parent.parent
 docs = ["api-v1-to-v2-migration-guide.md", "v1-to-v2-migration-analysis.md",
-        "v1-api-endpoints.md", "v2-technical-inventory.md", "special-cases.md"]
+        "v1-api-endpoints.md", "v2-technical-inventory.md"]
 
 if len(sys.argv) > 1:
     src = pathlib.Path(sys.argv[1]).expanduser().resolve()

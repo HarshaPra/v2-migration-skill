@@ -9,7 +9,7 @@ The same instructions ship in three formats, so every agent reads the same rules
 | `SKILL.md` | Claude Code (Agent Skills format). **Source of truth** |
 | `AGENTS.md` | OpenAI Codex, and any agent that follows the `AGENTS.md` convention (e.g. Gemini CLI, Aider, Copilot agents, Windsurf) |
 | `.cursor/rules/thinkar-v2-migration.mdc` | Cursor |
-| `references/*.md` | All of them: the full migration guide, analysis, V1 inventory, V2 inventory, special cases |
+| `references/*.md` | All of them: the full migration guide, analysis, V1 inventory, V2 inventory |
 
 ## Install
 
