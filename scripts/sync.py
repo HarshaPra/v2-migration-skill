@@ -2,13 +2,13 @@
 """Regenerate AGENTS.md and the Cursor rule from SKILL.md, and refresh references/.
 
 Usage (from the skill folder):  python3 scripts/sync.py [path/to/migrate-doc]
-If a docs folder is given, the four reference docs are copied from it first.
+If a docs folder is given, the reference docs are copied from it first.
 """
 import pathlib, shutil, sys
 
 root = pathlib.Path(__file__).resolve().parent.parent
 docs = ["api-v1-to-v2-migration-guide.md", "v1-to-v2-migration-analysis.md",
-        "v1-api-endpoints.md", "v2-technical-inventory.md"]
+        "v1-api-endpoints.md", "v2-technical-inventory.md", "special-cases.md"]
 
 if len(sys.argv) > 1:
     src = pathlib.Path(sys.argv[1]).expanduser().resolve()

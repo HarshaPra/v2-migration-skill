@@ -9,7 +9,7 @@ The same instructions ship in three formats, so every agent reads the same rules
 | `SKILL.md` | Claude Code (Agent Skills format). **Source of truth** |
 | `AGENTS.md` | OpenAI Codex, and any agent that follows the `AGENTS.md` convention (e.g. Gemini CLI, Aider, Copilot agents, Windsurf) |
 | `.cursor/rules/thinkar-v2-migration.mdc` | Cursor |
-| `references/*.md` | All of them: the full migration guide, analysis, V1 inventory, V2 inventory |
+| `references/*.md` | All of them: the full migration guide, analysis, V1 inventory, V2 inventory, special cases |
 
 ## Install
 
@@ -46,7 +46,7 @@ Paste or attach `AGENTS.md` (plain Markdown, no tool-specific syntax) and the `r
 1. Edit the docs in `migrate-doc/md files/`, and `SKILL.md` here if the rules change.
 2. Run:
    ```bash
-   python3 scripts/sync.py "../md files"   # copies the 4 docs into references/ and regenerates AGENTS.md + the Cursor rule
+   python3 scripts/sync.py "../md files"   # copies the 5 docs into references/ and regenerates AGENTS.md + the Cursor rule
    ```
 3. Never edit `AGENTS.md` or the `.mdc` file by hand. They are generated.
 
