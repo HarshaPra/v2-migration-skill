@@ -42,7 +42,7 @@ Android reference points (package `com.thinkar.ota`): `api/API.kt`, `api/BaseReq
 | sign-in `user.session.userId` | `GET /v2/auth/get-session` → `user.id` (UUID), `user.glassUserId` (number) | |
 | hardcoded BLE user id | `user.glassUserId` | Sign in **before** pairing, so the id is known |
 | — (no server call) | `POST /v2/devices/lookup { macAddress }` | New. Before pairing |
-| — (no server call) | `POST /v2/devices/bind { macAddress, deviceToken, firmwareVersion, name? }` | New. After the BLE handshake. Keep the returned `id` |
+| — (no server call) | `POST /v2/devices/bind { macAddress, deviceToken, modelCode, firmwareVersion, name? }` | New. After the BLE handshake. Keep the returned `id` |
 | `GET /api/v1/firmware/latest/{code}?currentVersion&deviceType` | `GET /v2/devices/{id}/firmware/check?currentVersion=` | By bound device id. Send the glasses' **real** version |
 | `GET /api/v1/firmware/download/{id}` → `download_url` | `release.url` from the check | Valid 15 minutes |
 | `POST` + `PATCH /api/v1/firmware/update-log` | `POST /v2/devices/{id}/firmware/updates` | One report at the end |
@@ -100,7 +100,10 @@ Base URL: one `https://<host>/v2` constant per environment.
 - Body: `macAddress` (required), `deviceToken`, `firmwareVersion`, `name`, `serialNumber`, `macAddressBt`, `os`, `frameVersion`, `modelCode` (all optional, strings). No `Idempotency-Key`, `cloud_token`, `claim` or `device_type`.
 - **`deviceToken`** is the SE handshake response bytes **12–15 read as an unsigned 32-bit little-endian integer, sent as a decimal string** (1–20 digits). This is what the V2 SDK does (`packages/react-native-sdk/android/.../SeHandshake.kt`, `readU32Le(bytes, 12)` and `deviceToken.toString()`). A wrong format returns `422 DEVICE_TOKEN_INVALID`.
 - Cloud token for pairing: generated in the app, `(unixSeconds & 0xFFFFFF) | 0xE0000000`, fresh on each pairing connect.
-- `modelCode` is used only if the device has no model yet. The tool doesn't read one from the glasses; leave it out.
+- **Send `modelCode`**, as `SKILL.md` §4 says. The server uses it only if the device has no model yet; without it, such a device stays without a model and the firmware check returns `unknown-model`.
+- Read it from the glasses' BLE advertisement, as the V2 SDK does (`AdvertisementParser.kt`): the Manufacturer-Specific Data (AD type `0xFF`) blob starting with the literal bytes `02 15`; bytes 2–3 are the model code, big-endian, sent as 4 uppercase hex digits (e.g. `0007`). Use it only when the `02 15` prefix is present.
+- On Android, walk the raw `ScanRecord.getBytes()` yourself: `getManufacturerSpecificData()` treats `02 15` as a company id and strips it.
+- The current Android OTA tool doesn't read the advertisement yet; it must be added. If no code can be read, leave `modelCode` out rather than guessing one.
 - Errors: `404 DEVICE_NOT_PROVISIONED`, `409 DEVICE_BLOCKED`, `409 DEVICE_ALREADY_OWNED`, `409 DEVICE_CONTENDED` (retry the same bind once, right away).
 
 ### Firmware check
@@ -150,10 +153,11 @@ Base URL: one `https://<host>/v2` constant per environment.
 - Sending the brand code to the server.
 - Downloading from a `release.url` older than 15 minutes.
 - Sending the device token as hex, or reading the bytes big-endian.
+- Leaving `modelCode` out of bind when the advertisement has one, or sending the brand code (`10`, `11`, …) as `modelCode`.
 - Leaving the shared account's password in source code (rule 12): inject it at build time and rotate it.
 
 ---
 
 ## 7. Sources checked
 
-V2 API (`thinkar-mono/thinkar/apps/api`, commit `7c40e4214`): `src/v2/device.ts`, `src/lib/firmware-check.ts`, `src/lib/device-scope.ts`, `src/lib/device-release.ts`, `src/lib/firmware-update-report.ts`, `src/lib/client-report.ts`, `src/lib/datetime.ts`, `src/lib/mac.ts`, `src/auth/one-phone.ts`, `src/auth/auth.ts`. SDK: `packages/react-native-sdk/android/src/main/java/com/thinkar/sdk/transport/protocol/SeHandshake.kt`. OTA tool: Android repo `OTA-Android` (commit `0c6e1ce`). The iOS OTA tool was not reviewed.
+V2 API (`thinkar-mono/thinkar/apps/api`, commit `7c40e4214`): `src/v2/device.ts`, `src/lib/firmware-check.ts`, `src/lib/device-scope.ts`, `src/lib/device-release.ts`, `src/lib/firmware-update-report.ts`, `src/lib/client-report.ts`, `src/lib/datetime.ts`, `src/lib/mac.ts`, `src/auth/one-phone.ts`, `src/auth/auth.ts`. SDK: `packages/react-native-sdk/android/src/main/java/com/thinkar/sdk/transport/protocol/SeHandshake.kt` and `AdvertisementParser.kt`. OTA tool: Android repo `OTA-Android` (commit `0c6e1ce`). The iOS OTA tool was not reviewed.
