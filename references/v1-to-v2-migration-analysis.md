@@ -183,7 +183,7 @@ Change types: **Same** · **Changed** (same purpose and path pattern, different 
 Request mapping notes:
 - **Optionality:** V1 bind required `mac_bt`, `model`, `name` and `device_token`. In V2 everything except `macAddress` is optional.
 - **Body strictness:** V1 bind / unbind / rename rejected unknown fields. V2 only validates the fields it knows (V1 §7 · V2 §C.5).
-- **`device_type`, `request_configuration_sn`: drop them** (confirmed by the API team). Send `modelCode` instead. The model is resolved from `modelCode` alone, only on the first bind of a device without a model.
+- **`device_type`, `request_configuration_sn`: drop them** (confirmed by the API team). Send `modelCode` instead: 4 uppercase hex digits (`000A`), not V1's `0215000A`. The model is resolved from `modelCode` alone (exact match), only on the first bind of a device without a model.
 
 ### 3.5 Live translation
 | Item | V1 | V2 | Change |
@@ -260,7 +260,7 @@ Request mapping notes:
 | `id` (int) | `id` (UUID) | type |
 | `mac_ble` | `macAddress` | renamed |
 | `mac_bt` | `macAddressBt` | renamed |
-| `model` | `modelCode` (+ new `modelId`) | renamed |
+| `model` | `modelCode` (+ new `modelId`) | renamed; send the last 4 hex digits only (`0215000A` → `000A`) |
 | `name` | `name` | same |
 | `firmware_ver` | `firmwareVersion` | renamed |
 | `serial` | `serialNumber` | renamed |

@@ -480,7 +480,7 @@ Idempotency-Key: bind-7f3a
 # After
 POST /v2/devices/bind
 
-{ "macAddress": "AA:BB:CC:DD:EE:FF", "macAddressBt": "AA:BB:CC:DD:EE:00", "modelCode": "0215000A", "name": "MyGlass",
+{ "macAddress": "AA:BB:CC:DD:EE:FF", "macAddressBt": "AA:BB:CC:DD:EE:00", "modelCode": "000A", "name": "MyGlass",
   "deviceToken": "17283901", "firmwareVersion": "1.7.23", "serialNumber": "MGG02X12261000001" }
 ```
 
@@ -488,7 +488,7 @@ POST /v2/devices/bind
 |---|---|
 | `mac_ble` | `macAddress` |
 | `mac_bt` | `macAddressBt` |
-| `model` | `modelCode` |
+| `model` | `modelCode` (last 4 hex digits only: `0215000A` → `000A`) |
 | `device_token` | `deviceToken` |
 | `firmware_ver` | `firmwareVersion` |
 | `serial` | `serialNumber` |
@@ -496,6 +496,7 @@ POST /v2/devices/bind
 | `os` | `os` |
 
 - **Removed:** `cloud_token`, `claim`, `device_type`, `request_configuration_sn`, and the `Idempotency-Key` header. Send `modelCode` (the model code the glasses report over BLE, e.g. `000A`) in place of `device_type`. The server ignores unknown fields.
+- **`modelCode` format: exactly 4 uppercase hex digits**, e.g. `0000`, `000A`, `0007`. V1 sent `model` with the advertisement's `02 15` prefix (`0215000A`); send only the **last 4 digits** (`000A`). The server only trims and upper-cases the code, then needs an exact match in its model-code list: `0215000A`, `0x000A` or `A` link to no model, and the firmware check then returns `unknown-model`. Known codes: `0000` Bach, `0002` Picasso, `0003` Mozart, `0004` Handel, `0005` G12X1, `0007` G07S5 (Ultra), `0008` G12S0, `0009` G07S3, `000A` G09, `0100` Ring.
 - Only `macAddress` is required. `deviceToken` must be 1–20 digits.
 - `macAddress` accepts any format (`aa-bb-cc-dd-ee-ff`, `aabbccddeeff`, …).
 - V2 has **no** `UNSUPPORTED_MODEL`. A bind never fails because of the model. An unknown model code is saved without a model, so staff can fix it later. The client only sees it as `status: "unknown-model"` from the firmware check (§7.4).
@@ -741,7 +742,7 @@ plus a second call for `{ "download_url": "..." }`.
 `release` and `rules` are `null` unless `status` is `update-available`.
 
 **How V2 picks the firmware.** V1 let the app pick the firmware by device type. V2 picks it on the server, from the **model** linked to the device. The client can't change it.
-- A device gets its model when staff register it, or on its **first** bind (the bind's `modelCode` is matched against the model codes, ignoring case). After that, a bind never changes the model, so a staff correction stays.
+- A device gets its model when staff register it, or on its **first** bind (the bind's `modelCode`, 4 hex digits such as `0007`, is matched exactly against the model codes after trimming and upper-casing). After that, a bind never changes the model, so a staff correction stays.
 - A device with no model gets `status: "unknown-model"`.
 - Remove client-side model overrides. For example, V1 iOS asked for Bach firmware (`0000`) for G09NBA glasses, which report the G09 code `000A`. In V2, staff must link `000A` (or those devices) to the model that has the right firmware. Check which model `000A` points to in production **before** removing the override (§2.3).
 
@@ -783,7 +784,7 @@ POST /v2/devices/{id}/firmware/updates
   "firmware_ver": "1.7.23", "serial": "MGG02X12261000001", "bound_at": "...", "status": "active", "device_token": "17283901" }
 
 // After (device)
-{ "id": "<uuid>", "macAddress": "AA:BB:CC:DD:EE:FF", "macAddressBt": "AA:BB:CC:DD:EE:00", "modelId": "<uuid>", "modelCode": "0215000A",
+{ "id": "<uuid>", "macAddress": "AA:BB:CC:DD:EE:FF", "macAddressBt": "AA:BB:CC:DD:EE:00", "modelId": "<uuid>", "modelCode": "000A",
   "name": "MyGlass", "firmwareVersion": "1.7.23", "serialNumber": "MGG02X12261000001", "os": null, "frameVersion": null,
   "status": "provisioned", "boundAt": "...", "lastSeenAt": null, "deviceToken": "17283901" }
 ```
@@ -1169,7 +1170,7 @@ Socket.IO `/live-agent` accepts **only** the `authorization` header.
 | `password` (change password) | `newPassword` (+ `currentPassword`) |
 | `mac_ble` | `macAddress` |
 | `mac_bt` | `macAddressBt` |
-| `model` | `modelCode` |
+| `model` | `modelCode` (last 4 hex digits only: `0215000A` → `000A`) |
 | `device_token` | `deviceToken` |
 | `firmware_ver` | `firmwareVersion` |
 | `serial` | `serialNumber` |
