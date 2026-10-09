@@ -201,7 +201,7 @@ Rules for all sign-in calls:
 |---|---|
 | `mac_ble` | `macAddress` |
 | `mac_bt` | `macAddressBt` |
-| `model` | `modelCode` |
+| `model` | `modelCode`: **last 4 hex digits only** (`0215000A` → `000A`) |
 | `device_token` | `deviceToken` |
 | `firmware_ver` | `firmwareVersion` |
 | `serial` | `serialNumber` |
@@ -210,6 +210,7 @@ Rules for all sign-in calls:
 | `terminal` / `terminals` | (unwrapped device) / `devices` |
 
 - **Device `status`** now means the hardware state (`provisioned | retired | blocked`), **not** the binding. Ownership = the device appears in `GET /v2/devices`.
+- **`modelCode` format:** exactly 4 uppercase hex digits, e.g. `0000`, `000A`, `0007`. The server trims and upper-cases it, then needs an **exact** match: a `02 15` prefix (V1's `0215000A`), a `0x` prefix or missing leading zeros link to no model, and the firmware check returns `unknown-model`. Known codes: `0000` Bach, `0002` Picasso, `0003` Mozart, `0004` Handel, `0005` G12X1, `0007` G07S5 (Ultra), `0008` G12S0, `0009` G07S3, `000A` G09, `0100` Ring.
 - **Lookup states:** `available`→`claimable`, `owned_by_you`→`owned_by_me`, `owned_by_other` (unchanged), plus the new states `unregistered`, `blocked`, `retired`.
 
 ### 4.2 Other field renames
@@ -234,7 +235,7 @@ Full details: `references/api-v1-to-v2-migration-guide.md` §6.8.
 2. Generate the cloud token in the app, fresh on every pairing connect: `(unixSeconds & 0xFFFFFF) | 0xE0000000` (`0xE1000000` for rings). The server no longer issues one.
 3. Connect over BLE with that cloud token and `userId` = `user.glassUserId` (integer, from `get-session`). **Never** use the UUID. Use the same number on every connect.
 4. The handshake returns `deviceToken` (decimal string).
-5. `POST /v2/devices/bind { macAddress, deviceToken, modelCode, serialNumber, firmwareVersion, … }`. Store the returned `deviceToken` in secure storage, keyed by MAC.
+5. `POST /v2/devices/bind { macAddress, deviceToken, modelCode, serialNumber, firmwareVersion, … }` (`modelCode` as 4 hex digits, §4.1). Store the returned `deviceToken` in secure storage, keyed by MAC.
 
 **Other cases:**
 
@@ -406,5 +407,6 @@ End the migration with:
 - Pairing glasses with the UUID `user.id` instead of `glassUserId`.
 - Treating `409 DEVICE_CONTENDED` as V1 `reserved_by_other` and waiting before retrying.
 - Calling the firmware check before the device is bound.
+- Sending `modelCode` as V1's `0215000A` (or `0x000A`, `A`) instead of `000A`.
 - Keeping a client-side firmware model override.
 - Leaving the change-email `callbackURL` out (the links end on a web page, not in the app).

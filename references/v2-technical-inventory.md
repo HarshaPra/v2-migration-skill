@@ -262,7 +262,7 @@ All `/v2/devices` routes need a session and act only on the signed-in user's dev
 - Repeating it for a device you already own is a safe retry: it updates the reported facts and returns success.
 - `deviceToken` (optional): numeric string, 1–20 digits.
 - Unknown body fields are ignored. There is no `device_type`, `request_configuration_sn` or `claim`.
-- **Model:** `modelCode` is matched against the model codes (ignoring case) only while the device has no model. A bind never changes an existing model and never fails because of the model. An unknown code is saved without a model.
+- **Model:** `modelCode` (4 uppercase hex digits, e.g. `0007`; no `02 15` or `0x` prefix) is trimmed, upper-cased and matched exactly against the model codes, only while the device has no model. A bind never changes an existing model and never fails because of the model. An unknown code is saved without a model.
 - A device owned by another account is refused with `409 DEVICE_ALREADY_OWNED` (logged as `rebind_rejected`). There is no takeover; only staff can release it (`POST /v2/admin/devices/{id}/force-unbind`, internal role `manage`).
 
 | Status | Code |
