@@ -14,12 +14,37 @@ The codebase is the OTA tool if most of these hold:
 - The operator types a **brand verification code** (`AISIN`, `Appoconn`, `CASALIZ`, `THINKAR`) that maps to a firmware code (`10`, `11`, `13`, `0`). The firmware code is the **major version** of that brand's firmware (`10.x.y` for AISIN).
 - It signs in with **one fixed engineer account**, not a user-entered account.
 - BLE pairing uses a **hardcoded glasses user id** (Android: `23412`) and a cloud token generated in the app.
-- It forces a reflash by sending `currentVersion=0` when the glasses' major version doesn't match the brand code.
+- It forces a reflash by sending `currentVersion=0` when the glasses' major version doesn't match the brand code (or when the debug switch `SentryTelemetryConfig.FORCE_UPDATE` is on). In effect this **converts** glasses to the typed brand: the server returns that brand's newest firmware and the tool flashes it.
 - After an update (or "already latest"), it sends the BLE **unbind** command, removes the OS Bluetooth bond, clears local device data and signs out.
 
-Android reference points (package `com.thinkar.ota`): `api/API.kt`, `api/BaseRequest.kt`, `api/Session.kt`, `verification/VerificationFragment.kt` (brand codes, sign-in, version check), `ble/AiLens.kt` (pairing user id and cloud token), `ble/FirmwareManager.kt`, `ble/FirmwareUpdateLogger.kt`, `ble/FirmwareUpdateService.kt` (`startFullUpdate`, `performUnbindAndCleanup`). On iOS, find the equivalents by behavior.
+Android reference points (package `com.thinkar.ota`):
+
+| File | What it holds |
+|---|---|
+| `api/API.kt` | V1 base URL and paths |
+| `api/BaseRequest.kt` | Bearer header, pre-request refresh (`refreshTokenIfNeed`), no 401 handling |
+| `api/Session.kt` | `SessionManager`: access/refresh token, `expiresAt`, user id |
+| `api/*Request.kt` | Sign-in, refresh, firmware latest, download link, update-log create/patch |
+| `verification/VerificationFragment.kt` | Brand codes, **hardcoded engineer credentials**, sign-in, version read, `currentVersion=0`, up-to-date clean-up |
+| `ble/GlassesService.kt` | Scan (`startScan`, `scanCallback`), post-flash reconnect with the saved retrieve token |
+| `ble/AiLens.kt` | Pairing user id `23412`, cloud token, handshake `deviceToken` (bytes 12–15), `completeConnection` saves device info |
+| `TokenManager.kt` | Pairing token and retrieve token, both built from the user id |
+| `SharedPrefs.kt` | Saved device info (MAC, retrieve token); `MainActivity` clears it on every launch unless an update is running |
+| `ble/FirmwareManager.kt` | Firmware check, download link, HEAD for size, download cache `ota/glass/<version>/ota.bin` |
+| `ble/FirmwareUpdateLogger.kt` | V1 update log (`begin` / `success` / `failed`) |
+| `ble/FirmwareUpdateService.kt` | `startFullUpdate` (download → transfer → reconnect → `performUnbindAndCleanup`) |
+| `ble/command/ota/GetVersionListCommand.kt` | Glasses version, `major.minor.patch` of entry type `0x20` |
+
+On iOS, find the equivalents by behavior.
 
 **V1 screen order (Android):** scan → pair → brand-code screen → sign in → read version → check. V2 needs the account (for `glassUserId`) **before** pairing, so sign-in and the brand code move in front of scanning (§4).
+
+**What the Android tool does today that matters for V2:**
+- It signs in fresh on every run, so a `401` mid-run is rare; there is no 401 handling to port.
+- The scan filter is `ScanFilter.setManufacturerData(5378, byteArrayOf(0x00, 0x00))` (`5378` = `0x1502`, the `02 15` prefix read as a company id). It only lists glasses whose model code is **`0000`**, so every brand it updates today reports `0000`. Keep the filter (rule 11).
+- It never verifies `sha256` and never checks battery. V2 gives both; add them (§5).
+- There is no cancel control: `FirmwareUpdateService.stopUpdate()` has no caller.
+- On failure it shows the failed screen and keeps the glasses paired and the session open; only success and up-to-date run the clean-up.
 
 ---
 
@@ -79,8 +104,10 @@ Base URL: one `https://<host>/v2` constant per environment.
 
 - **Report before unbind.** After unbind the account no longer owns the device and the report returns `404 DEVICE_NOT_FOUND`.
 - **Up to date, refused, cancelled and failure paths** still run steps 14–16 (and 13 if a release was offered). Step 14 must not depend on the BLE unbind working: glasses that failed mid-flash may not answer BLE.
+- **Store the crash-recovery record on its own.** `MainActivity` calls `SharedPrefs.clearDeviceInfo()` on every launch, so don't keep it in the saved device info.
 - **Step 4 never unbinds anything this phone didn't bind.** All station phones share one account, so `GET /v2/devices` also lists glasses that *other* stations are updating right now. Unbinding those breaks their run (their report and check return `404 DEVICE_NOT_FOUND`). Save the bound device id (and, once offered, the `releaseId` and `startedAt`) in local storage at step 9, clear it after step 14, and on start-up release only that saved id. A device left bound by a phone that was wiped or replaced is released by staff from the dashboard.
-- **Step 8 before step 9**: bind takes `firmwareVersion`, so read it first. If the glasses' major version doesn't match the brand code, stop with "These glasses are not <brand>" — V2 can't force a reflash (§5).
+- **Step 8 before step 9**: bind takes `firmwareVersion`, so read it first.
+- **Brand conversion is gone.** If the glasses' major version doesn't match the brand code, stop with "These glasses are not <brand>". V2 can't force a reflash (§5), so the V1 conversion (and the `FORCE_UPDATE` switch) can't be ported. Add `TODO(v2-migration): needs manual review — V1 converted glasses to another brand via currentVersion=0; V2 has no equivalent` and list it in the report (rule 13: confirm with the user before removing the path).
 
 ---
 
@@ -107,7 +134,8 @@ Base URL: one `https://<host>/v2` constant per environment.
 ### Bind
 - Body: `macAddress` (required), `deviceToken`, `firmwareVersion`, `name`, `serialNumber`, `macAddressBt`, `os`, `frameVersion`, `modelCode` (all optional, strings). No `Idempotency-Key`, `cloud_token`, `claim` or `device_type`.
 - **`deviceToken`** is the SE handshake response bytes **12–15 read as an unsigned 32-bit little-endian integer, sent as a decimal string** (1–20 digits). This is what the V2 SDK does (`packages/react-native-sdk/android/.../SeHandshake.kt`, `readU32Le(bytes, 12)` and `deviceToken.toString()`). A wrong format returns `422 DEVICE_TOKEN_INVALID`.
-- Cloud token for pairing: generated in the app, `(unixSeconds & 0xFFFFFF) | 0xE0000000`, fresh on each pairing connect.
+- Cloud token for pairing: generated in the app, `(unixSeconds & 0xFFFFFF) | 0xE0000000`, fresh on each pairing connect. (Android already does this: each scan result builds a new `AiLens`.)
+- **Replace `23412` everywhere it is used, not only for pairing.** `AiLens.userId` feeds both the pairing token (`TokenManager.createConnectionToken`) and the saved retrieve token (`SharedPrefs.saveDeviceInfo` → `TokenManager.getRetrieveToken`) that `GlassesService` uses to reconnect after the flash. Both must use the same `glassUserId`, or the post-flash reconnect is rejected. Persist `glassUserId` with the session: `FirmwareUpdateService` runs as a foreground service and can outlive the screen that signed in.
 - Errors: `404 DEVICE_NOT_PROVISIONED`, `409 DEVICE_BLOCKED`, `409 DEVICE_ALREADY_OWNED`, `409 DEVICE_CONTENDED` (retry the same bind once, right away).
 
 ### Model code
@@ -122,7 +150,7 @@ Base URL: one `https://<host>/v2` constant per environment.
   | `0004` | Handel | | `000A` | G09 (also G09 NBA) |
   | `0005` | G12X1 | | `0100` | Ring (not glasses) |
 
-- **Android:** read it from the BLE advertisement, as the V2 SDK does (`AdvertisementParser.kt`): the Manufacturer-Specific Data (AD type `0xFF`) blob starting with the literal bytes `02 15`; bytes 2–3 are the model code, big-endian, formatted `"%04X"`. Use it only when the `02 15` prefix is present. Walk the raw `ScanRecord.getBytes()` yourself: `getManufacturerSpecificData()` treats `02 15` as a company id and strips it. The current Android OTA tool doesn't read the advertisement yet; it must be added at scan time (step 5) and kept per MAC.
+- **Android:** read it from the BLE advertisement, as the V2 SDK does (`AdvertisementParser.kt`): the Manufacturer-Specific Data (AD type `0xFF`) blob starting with the literal bytes `02 15`; bytes 2–3 are the model code, big-endian, formatted `"%04X"`. Use it only when the `02 15` prefix is present. Walk the raw `ScanRecord.getBytes()` yourself: `getManufacturerSpecificData()` treats `02 15` as a company id and strips it. The current Android OTA tool doesn't read the advertisement yet: in `GlassesService.scanCallback.onScanResult`, parse `result.scanRecord?.bytes` and keep the code with the `AiLens` for that MAC. With today's scan filter it is always `0000`.
 - **iOS:** the vendor SDK's `XRDeviceModel` value is already the 4-digit code (`XRDeviceModelG07S5` = `"0007"`); the V2 SDK sends `device.model.rawValue` (`XRBluetoothBridge.modelCodeOf`). Don't send it when the model is unknown / unverified.
 - If no code can be read, leave `modelCode` out rather than guessing one. Never send the brand code (`10`, `11`, …).
 
@@ -133,13 +161,14 @@ Base URL: one `https://<host>/v2` constant per environment.
 - **`currentVersion` must be the exact version string of a release the server holds for that model** (`lib/firmware-check.ts` matches the string, then compares build numbers). A version that matches no release returns `up-to-date`, silently. So:
   - Send the version exactly as `GetVersionList` returns it; don't reformat it.
   - The V1 `currentVersion=0` trick no longer forces a reflash; remove it (and the `FORCE_UPDATE` switch that feeds it).
-- **Brand guard.** Firmware is picked from the device's server-side model, not the brand. Glasses of different brands can share one model code (e.g. `0007`), so before downloading, check that the major version of `release.version` equals the brand code. If not, don't flash: report nothing, run steps 14–16, and tell the operator "The server offered <version>, which is not <brand> firmware. Ask staff to check the device's model."
+- **Brand guard.** Firmware is picked from the device's server-side model, not the brand. Glasses of different brands share one model code: every brand the Android tool updates today reports `0000`, so on the server they are all one model (Bach), and the newest build of that model wins whatever its major version. The server-side fix is for staff to give each brand's releases `upgradeScope` `minor` or `patch` (both keep the same major version; the default `any` doesn't) — report this as a manual-review item. In the tool, before downloading, check that the major version of `release.version` equals the brand code. If not, don't flash: report nothing, run steps 14–16, and tell the operator "The server offered <version>, which is not <brand> firmware. Ask staff to check the device's model."
 - `unknown-model`: stop with "These glasses have no model on the server. Ask staff to link model code <code>."
 - `404 DEVICE_NOT_FOUND` for a device the account doesn't own (e.g. not bound yet).
 
 ### Download
 - Use `release.url` directly; there's no download-link endpoint. It expires 15 minutes after the check. If the operator waits, check again before downloading.
-- Use `sizeBytes` instead of a HEAD request. Verify the file's SHA-256 against `sha256`.
+- Use `sizeBytes` instead of the HEAD request (`FirmwareManager.getFileSizeFromURL`). Verify the file's SHA-256 against `sha256`.
+- The Android tool reuses a cached file at `ota/glass/<version>/ota.bin` without downloading. Verify `sha256` on the cached file too, and download again on a mismatch.
 - Enforce `rules` before flashing (battery from the BLE battery command). Use `maxDurationMs` as the limit for one attempt.
 
 ### Firmware update history
@@ -152,7 +181,7 @@ Base URL: one `https://<host>/v2` constant per environment.
   | Transfer finished, glasses reconnected but report a different version | `failed`, `error` = both versions |
   | Transfer finished, reconnect timed out | `interrupted`, `error` = "reconnect timeout" |
   | Disconnect during download or transfer | `interrupted` |
-  | Operator cancelled | `cancelled` |
+  | Operator cancelled (only if the tool has a cancel control; Android has none today — don't add one) | `cancelled` |
   | Any other error (download, sha256 mismatch, BLE command) | `failed` |
 
 - `sdkVersion`: required, 1–50 characters, e.g. `ota-tool/<app version>`.
@@ -193,10 +222,13 @@ Base URL: one `https://<host>/v2` constant per environment.
 - Sending the device token as hex, or reading the bytes big-endian.
 - Leaving `modelCode` out of bind when the advertisement has one; sending it with the `02 15` prefix (`0215000A`), a `0x` prefix, lower-case or without leading zeros; or sending the brand code (`10`, `11`, …) as `modelCode`.
 - Working around `owned_by_other` instead of stopping and reporting it.
+- Replacing `23412` for pairing but not in the saved retrieve token (the post-flash reconnect fails).
+- Keeping the crash-recovery record in the saved device info (`MainActivity` wipes it on launch).
+- Flashing a cached firmware file without checking its `sha256`.
 - Leaving the shared account's password in source code (rule 12): inject it at build time and rotate it.
 
 ---
 
 ## 7. Sources checked
 
-V2 API (`thinkar-mono/thinkar/apps/api`, commit `a4a3c2502`): `src/v2/device.ts`, `src/lib/firmware-check.ts`, `src/lib/device-scope.ts`, `src/lib/model-code-resolver.ts`, `src/lib/device-release.ts`, `src/lib/firmware-update-report.ts`, `src/lib/legacy-ownership-sync.ts`, `src/lib/client-report.ts`, `src/lib/datetime.ts`, `src/lib/mac.ts`, `src/auth/one-phone.ts`, `src/auth/auth.ts`, `src/middleware/auth.ts`. SDK: `packages/react-native-sdk/android/.../SeHandshake.kt`, `AdvertisementParser.kt`, `src/capabilities/modelCode.ts`, `ios/ThinkARSDK/Core/BLE/XRBluetoothBridge.swift`, `docs/xrbluetooth-internals.md` §4.1. Production model codes (`0000`, `000A`, `0007`, …) confirmed by the API team; the dev seed (`packages/db/src/dev-seed.ts`) uses placeholder codes and is not the reference. OTA tool: Android repo `OTA-Android` (commit `0c6e1ce`). The iOS OTA tool was not reviewed.
+V2 API (`thinkar-mono/thinkar/apps/api`, commit `a4a3c2502`): `src/v2/device.ts`, `src/lib/firmware-check.ts`, `src/lib/device-scope.ts`, `src/lib/model-code-resolver.ts`, `src/lib/device-release.ts`, `src/lib/firmware-update-report.ts`, `src/lib/legacy-ownership-sync.ts`, `src/lib/client-report.ts`, `src/lib/datetime.ts`, `src/lib/mac.ts`, `src/auth/one-phone.ts`, `src/auth/auth.ts`, `src/middleware/auth.ts`. SDK: `packages/react-native-sdk/android/.../SeHandshake.kt`, `AdvertisementParser.kt`, `src/capabilities/modelCode.ts`, `ios/ThinkARSDK/Core/BLE/XRBluetoothBridge.swift`, `docs/xrbluetooth-internals.md` §4.1. Production model codes (`0000`, `000A`, `0007`, …) confirmed by the API team; the dev seed (`packages/db/src/dev-seed.ts`) uses placeholder codes and is not the reference. OTA tool: Android repo `OTA-Android` (commit `0c6e1ce`), all files in the table in §1 plus `MainActivity.kt`, `ota/OTAFragment.kt` and the navigation graphs. The iOS OTA tool (`OTA-iOS`) was not reviewed.
